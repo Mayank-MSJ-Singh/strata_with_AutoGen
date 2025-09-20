@@ -1,0 +1,57 @@
+import os
+import asyncio
+import webbrowser
+
+from dotenv import load_dotenv
+from klavis import Klavis
+from klavis.types import McpServerName
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.ui import Console
+from autogen_core import CancellationToken
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_ext.tools.mcp import StreamableHttpServerParams
+from autogen_ext.tools.mcp import mcp_server_tools
+
+
+load_dotenv()
+
+async def main() -> None:
+    klavis_client = Klavis(api_key=os.getenv("KLAVIS_API_KEY"))
+
+    # Step 1: Create a Strata MCP server with Gmail and YouTube integrations
+    response = klavis_client.mcp_server.create_strata_server(
+        user_id="demo_user",
+        servers=[McpServerName.GMAIL, McpServerName.YOUTUBE],
+    )
+
+    # Handle OAuth authorization if required
+    if response.oauth_urls:
+        for server_name, oauth_url in response.oauth_urls.items():
+            webbrowser.open(oauth_url)
+            input(f"Press Enter after completing {server_name} OAuth authorization...")
+
+    server_params = StreamableHttpServerParams(
+        url=response.strata_server_url,
+        timeout=30.0,
+        sse_read_timeout=300.0,
+        terminate_on_close=True,
+    )
+
+    adapters = await mcp_server_tools(server_params)
+
+    model_client = OpenAIChatCompletionClient(model="gpt-4")
+    agent = AssistantAgent(
+        name="MultiAI",
+        model_client=model_client,
+        tools=adapters,
+        system_message="You are a helpful AI assistant.",
+    )
+
+    await Console(
+        agent.run_stream(
+            task="Get my latest mails.",
+            cancellation_token=CancellationToken(),
+        )
+    )
+if __name__ == "__main__":
+    asyncio.run(main())
